@@ -1,42 +1,94 @@
 import Quill from "quill";
-// import "quill/dist/quill.core.css";
 
+/**
+ * LiveView hook for Quill rich text editor integration
+ * Provides auto-save, image upload, and real-time content synchronization
+ */
 export default {
   mounted() {
-    this.initializeState();
-    this.setupQuillEditor();
-    this.setupEventHandlers();
-    this.setupAutoSave();
+    this.initialize();
   },
 
   destroyed() {
     this.cleanup();
   },
 
-  // Initialize component state
-  initializeState() {
-    this.editor = null;
-    this.autoSaveInterval = null;
-    this.autoSaveEnabled = false;
-    this.isDestroyed = false;
-    this.saveButton = null;
-    this.autoSaveToggle = null;
-    this.autoSaveStatus = null;
-    this.inputElement = null;
+  /**
+   * Initialize the component
+   */
+  initialize() {
+    this.initializeState();
+    this.cacheElements();
+    this.setupQuillEditor();
+    this.bindEventHandlers();
+    this.setupAutoSave();
   },
 
-  // Setup Quill editor
-  setupQuillEditor() {
-    const editorElement = this.el.querySelector("#quill-editor");
-    this.inputElement = this.el.querySelector("#quill-input");
+  /**
+   * Initialize component state
+   */
+  initializeState() {
+    this.state = {
+      editor: null,
+      autoSaveInterval: null,
+      autoSaveEnabled: false,
+      isDestroyed: false,
+      lastSavedContent: null,
+    };
 
-    if (!editorElement || !this.inputElement) {
-      console.error("Quill editor or input element not found");
-      return;
+    this.config = {
+      autoSaveInterval: 10000, // 10 seconds
+      imageUploadEndpoint: "/api/upload-image",
+    };
+  },
+
+  /**
+   * Cache DOM elements for better performance
+   */
+  cacheElements() {
+    this.elements = {
+      editor: this.el.querySelector("#quill-editor"),
+      input: this.el.querySelector("#quill-input"),
+      saveButton: document.querySelector("#save-btn"),
+      autoSaveToggle: document.querySelector("#auto-save-toggle"),
+      autoSaveStatus: document.querySelector("#auto-save-status"),
+    };
+
+    // Validate required elements
+    if (!this.elements.editor || !this.elements.input) {
+      throw new Error("Required Quill editor elements not found");
     }
+  },
 
-    // Configure Quill with custom toolbar
-    const toolbarOptions = [
+  /**
+   * Setup Quill editor with configuration
+   */
+  setupQuillEditor() {
+    const toolbarConfig = this.getToolbarConfiguration();
+
+    this.state.editor = new Quill(this.elements.editor, {
+      theme: "snow",
+      modules: {
+        toolbar: {
+          container: toolbarConfig,
+          handlers: {
+            image: this.handleImageUpload.bind(this),
+          },
+        },
+      },
+      placeholder: "Start writing your content here...",
+      readOnly: false,
+    });
+
+    this.loadInitialContent();
+    console.log("Quill editor initialized successfully");
+  },
+
+  /**
+   * Get toolbar configuration
+   */
+  getToolbarConfiguration() {
+    return [
       [{ header: [1, 2, 3, 4, 5, 6, false] }],
       [{ font: [] }],
       [{ size: ["small", false, "large", "huge"] }],
@@ -51,127 +103,137 @@ export default {
       ["link", "image", "video"],
       ["clean"],
     ];
-
-    // Initialize Quill editor
-    this.editor = new Quill(editorElement, {
-      theme: "snow",
-      modules: {
-        toolbar: {
-          container: toolbarOptions,
-          handlers: {
-            image: this.handleImageUpload.bind(this),
-          },
-        },
-      },
-      placeholder: "Start writing your content here...",
-      readOnly: false,
-    });
-
-    // Set initial content if available
-    const initialContent = this.inputElement.value;
-    if (initialContent) {
-      try {
-        const delta = JSON.parse(initialContent);
-        this.editor.setContents(delta);
-      } catch (error) {
-        // If not valid JSON, treat as HTML
-        this.editor.root.innerHTML = initialContent;
-      }
-    }
-
-    console.log("Quill editor initialized");
   },
 
-  // Setup event handlers
-  setupEventHandlers() {
-    // Quill editor events
-    this.editor.on("text-change", this.handleContentChange.bind(this));
-    this.editor.on("selection-change", this.handleSelectionChange.bind(this));
+  /**
+   * Load initial content into editor
+   */
+  loadInitialContent() {
+    const initialContent = this.elements.input.value;
+    if (!initialContent) return;
 
-    // Get UI elements
-    this.saveButton = document.querySelector("#save-btn");
-    this.autoSaveToggle = document.querySelector("#auto-save-toggle");
-    this.autoSaveStatus = document.querySelector("#auto-save-status");
+    try {
+      const delta = JSON.parse(initialContent);
+      this.state.editor.setContents(delta);
+      this.state.lastSavedContent = initialContent;
+    } catch (error) {
+      // Fallback to HTML if JSON parsing fails
+      this.state.editor.root.innerHTML = initialContent;
+      console.warn("Initial content was not valid JSON, treated as HTML");
+    }
+  },
 
-    // Setup button handlers
-    if (this.autoSaveToggle) {
-      this.autoSaveToggle.addEventListener(
+  /**
+   * Bind all event handlers
+   */
+  bindEventHandlers() {
+    this.bindQuillEvents();
+    this.bindUIEvents();
+    this.bindLiveViewEvents();
+  },
+
+  /**
+   * Bind Quill editor events
+   */
+  bindQuillEvents() {
+    this.state.editor.on("text-change", this.handleContentChange.bind(this));
+    this.state.editor.on(
+      "selection-change",
+      this.handleSelectionChange.bind(this),
+    );
+  },
+
+  /**
+   * Bind UI element events
+   */
+  bindUIEvents() {
+    if (this.elements.autoSaveToggle) {
+      this.elements.autoSaveToggle.addEventListener(
         "click",
         this.toggleAutoSave.bind(this),
       );
     }
 
-    if (this.saveButton) {
-      this.saveButton.addEventListener(
+    if (this.elements.saveButton) {
+      this.elements.saveButton.addEventListener(
         "click",
         this.handleSaveClick.bind(this),
       );
     }
+  },
 
-    // LiveView event handlers
+  /**
+   * Bind LiveView events
+   */
+  bindLiveViewEvents() {
     this.handleEvent("content_saved", this.handleContentSaved.bind(this));
     this.handleEvent("save_error", this.handleSaveError.bind(this));
   },
 
-  // Handle content changes
+  /**
+   * Handle content changes in editor
+   */
   handleContentChange(delta, oldDelta, source) {
-    if (this.isDestroyed || source !== "user") return;
+    if (this.state.isDestroyed || source !== "user") return;
 
-    // Get content as Delta (structured format)
-    const content = JSON.stringify(this.editor.getContents());
-    this.inputElement.value = content;
+    const content = this.serializeContent();
+    this.elements.input.value = content;
 
-    console.log(content);
-
-    // Send content change to LiveView
-    this.pushEvent("content_changed", { content: content });
-
-    // Enable save button
-    this.enableSaveButton();
-  },
-
-  // Handle selection changes
-  handleSelectionChange(range, oldRange, source) {
-    if (range) {
-      if (range.length === 0) {
-        console.log("User cursor is on", range.index);
-      } else {
-        console.log("User has highlighted", range.index, range.length);
-      }
-    } else {
-      console.log("Cursor not in the editor");
+    // Only push event if content actually changed
+    if (content !== this.state.lastSavedContent) {
+      this.pushEvent("content_changed", { content });
+      this.updateSaveButtonState(true);
     }
   },
 
-  // Handle image upload
-  handleImageUpload() {
-    // Create a hidden file input
-    const input = document.createElement("input");
-    input.setAttribute("type", "file");
-    input.setAttribute("accept", "image/*");
-    input.click();
+  /**
+   * Handle selection changes (optional logging)
+   */
+  handleSelectionChange(range, oldRange, source) {
+    if (!range) return;
 
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (file) {
-        try {
-          const result = await this.uploadImageFile(file);
-
-          // Insert image at current cursor position
-          const range = this.editor.getSelection(true);
-          this.editor.insertEmbed(range.index, "image", result.url);
-
-          // Move cursor after the image
-          this.editor.setSelection(range.index + 1);
-        } catch (error) {
-          console.error("Image upload failed:", error);
-          this.showErrorMessage("Failed to upload image");
-        }
-      }
-    };
+    if (range.length === 0) {
+      console.log(`Cursor position: ${range.index}`);
+    } else {
+      console.log(`Selection: ${range.index} - ${range.index + range.length}`);
+    }
   },
 
-  // Upload image file
+  /**
+   * Handle image upload
+   */
+  async handleImageUpload() {
+    try {
+      const file = await this.selectImageFile();
+      if (!file) return;
+
+      const uploadResult = await this.uploadImageFile(file);
+      this.insertImageIntoEditor(uploadResult.url);
+    } catch (error) {
+      console.error("Image upload failed:", error);
+      this.showMessage("error", "Failed to upload image");
+    }
+  },
+
+  /**
+   * Show file selection dialog
+   */
+  selectImageFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+
+      input.onchange = () => resolve(input.files[0]);
+      input.oncancel = () => resolve(null);
+
+      input.click();
+    });
+  },
+
+  /**
+   * Upload image file to server
+   */
   async uploadImageFile(file) {
     const formData = new FormData();
     formData.append("file", file);
@@ -180,7 +242,7 @@ export default {
       .querySelector('meta[name="csrf-token"]')
       ?.getAttribute("content");
 
-    const response = await fetch("/api/upload-image", {
+    const response = await fetch(this.config.imageUploadEndpoint, {
       method: "POST",
       body: formData,
       headers: {
@@ -189,35 +251,51 @@ export default {
     });
 
     if (!response.ok) {
-      throw new Error(`Upload failed with status: ${response.status}`);
+      throw new Error(
+        `Upload failed: ${response.status} ${response.statusText}`,
+      );
     }
 
     const result = await response.json();
 
-    if (result.success) {
-      return result.file;
-    } else {
+    if (!result.success) {
       throw new Error(result.error || "Upload failed");
     }
+
+    return result.file;
   },
 
-  // Handle save button click
+  /**
+   * Insert image into editor at current cursor position
+   */
+  insertImageIntoEditor(imageUrl) {
+    const range = this.state.editor.getSelection(true);
+    this.state.editor.insertEmbed(range.index, "image", imageUrl);
+    this.state.editor.setSelection(range.index + 1);
+  },
+
+  /**
+   * Handle manual save button click
+   */
   handleSaveClick() {
-    const content = JSON.stringify(this.editor.getContents());
-    this.pushEvent("save_content", { content: content });
+    const content = this.serializeContent();
+    this.pushEvent("save_content", { content });
   },
 
-  // Setup auto-save functionality
+  /**
+   * Setup auto-save functionality
+   */
   setupAutoSave() {
-    // Auto-save is initially disabled
     this.updateAutoSaveStatus();
   },
 
-  // Toggle auto-save
+  /**
+   * Toggle auto-save on/off
+   */
   toggleAutoSave() {
-    this.autoSaveEnabled = !this.autoSaveEnabled;
+    this.state.autoSaveEnabled = !this.state.autoSaveEnabled;
 
-    if (this.autoSaveEnabled) {
+    if (this.state.autoSaveEnabled) {
       this.startAutoSave();
     } else {
       this.stopAutoSave();
@@ -226,144 +304,168 @@ export default {
     this.updateAutoSaveStatus();
   },
 
-  // Start auto-save
+  /**
+   * Start auto-save timer
+   */
   startAutoSave() {
-    if (this.autoSaveInterval) {
-      clearInterval(this.autoSaveInterval);
-    }
+    this.stopAutoSave(); // Clear any existing interval
 
-    this.autoSaveInterval = setInterval(() => {
+    this.state.autoSaveInterval = setInterval(() => {
       this.performAutoSave();
-    }, 10000); // Auto-save every 10 seconds
+    }, this.config.autoSaveInterval);
   },
 
-  // Stop auto-save
+  /**
+   * Stop auto-save timer
+   */
   stopAutoSave() {
-    if (this.autoSaveInterval) {
-      clearInterval(this.autoSaveInterval);
-      this.autoSaveInterval = null;
+    if (this.state.autoSaveInterval) {
+      clearInterval(this.state.autoSaveInterval);
+      this.state.autoSaveInterval = null;
     }
   },
 
-  // Perform auto-save
+  /**
+   * Perform auto-save if content has changed
+   */
   performAutoSave() {
-    if (!this.editor || this.isDestroyed) return;
+    if (!this.state.editor || this.state.isDestroyed) return;
 
-    const content = JSON.stringify(this.editor.getContents());
-    const text = this.editor.getText();
+    const content = this.serializeContent();
+    const text = this.state.editor.getText().trim();
 
-    if (text.trim() !== "") {
-      this.pushEvent("auto_save", { content: content });
+    if (text && content !== this.state.lastSavedContent) {
+      this.pushEvent("auto_save", { content });
       console.log("Auto-saved content");
     }
   },
 
-  // Update auto-save status display
+  /**
+   * Update auto-save status display
+   */
   updateAutoSaveStatus() {
-    if (this.autoSaveStatus) {
-      this.autoSaveStatus.textContent = this.autoSaveEnabled ? "ON" : "OFF";
+    if (this.elements.autoSaveStatus) {
+      this.elements.autoSaveStatus.textContent = this.state.autoSaveEnabled
+        ? "ON"
+        : "OFF";
+      this.elements.autoSaveStatus.className = this.state.autoSaveEnabled
+        ? "text-green-600"
+        : "text-gray-500";
     }
   },
 
-  // Enable save button
-  enableSaveButton() {
-    if (this.saveButton) {
-      this.saveButton.disabled = false;
-      this.saveButton.classList.remove("opacity-50");
+  /**
+   * Update save button state
+   */
+  updateSaveButtonState(hasChanges) {
+    if (!this.elements.saveButton) return;
+
+    this.elements.saveButton.disabled = !hasChanges;
+
+    if (hasChanges) {
+      this.elements.saveButton.classList.remove("opacity-70");
+    } else {
+      this.elements.saveButton.classList.add("opacity-70");
     }
   },
 
-  // Disable save button
-  disableSaveButton() {
-    if (this.saveButton) {
-      this.saveButton.disabled = true;
-      this.saveButton.classList.add("opacity-50");
-    }
-  },
-
-  // Handle successful save
+  /**
+   * Handle successful save response
+   */
   handleContentSaved() {
     console.log("Content saved successfully");
-    this.disableSaveButton();
-    this.showSuccessMessage("Content saved successfully!");
+    this.state.lastSavedContent = this.serializeContent();
+    this.updateSaveButtonState(false);
+    this.showMessage("success", "Content saved successfully!");
   },
 
-  // Handle save error
+  /**
+   * Handle save error response
+   */
   handleSaveError(error) {
     console.error("Save error:", error);
-    this.showErrorMessage("Failed to save content");
+    this.showMessage("error", "Failed to save content");
   },
 
-  // Show success message
-  showSuccessMessage(message) {
-    this.pushEvent("show_flash", { type: "success", message: message });
+  /**
+   * Show flash message
+   */
+  showMessage(type, message) {
+    this.pushEvent("show_flash", { type, message });
   },
 
-  // Show error message
-  showErrorMessage(message) {
-    this.pushEvent("show_flash", { type: "error", message: message });
+  /**
+   * Serialize editor content to JSON
+   */
+  serializeContent() {
+    return this.state.editor
+      ? JSON.stringify(this.state.editor.getContents())
+      : "";
   },
 
-  // Get current content
-  getCurrentContent() {
-    return this.editor ? JSON.stringify(this.editor.getContents()) : "";
-  },
-
-  // Get current text
+  /**
+   * Get current text content
+   */
   getCurrentText() {
-    return this.editor ? this.editor.getText() : "";
+    return this.state.editor ? this.state.editor.getText() : "";
   },
 
-  // Set content programmatically
+  /**
+   * Set content programmatically
+   */
   setContent(content) {
-    if (this.editor) {
-      try {
-        const delta = JSON.parse(content);
-        this.editor.setContents(delta);
-      } catch (error) {
-        // If not valid JSON, treat as HTML
-        this.editor.root.innerHTML = content;
-      }
+    if (!this.state.editor) return;
+
+    try {
+      const delta = JSON.parse(content);
+      this.state.editor.setContents(delta);
+    } catch (error) {
+      this.state.editor.root.innerHTML = content;
     }
   },
 
-  // Clear content
+  /**
+   * Clear all content
+   */
   clearContent() {
-    if (this.editor) {
-      this.editor.setText("");
+    if (this.state.editor) {
+      this.state.editor.setText("");
     }
   },
 
-  // Insert text at cursor
+  /**
+   * Insert text at current cursor position
+   */
   insertText(text) {
-    if (this.editor) {
-      const range = this.editor.getSelection(true);
-      this.editor.insertText(range.index, text);
-    }
+    if (!this.state.editor) return;
+
+    const range = this.state.editor.getSelection(true);
+    this.state.editor.insertText(range.index, text);
   },
 
-  // Format text
+  /**
+   * Format selected text
+   */
   formatText(format, value) {
-    if (this.editor) {
-      const range = this.editor.getSelection(true);
-      if (range) {
-        this.editor.formatText(range.index, range.length, format, value);
-      }
+    if (!this.state.editor) return;
+
+    const range = this.state.editor.getSelection(true);
+    if (range && range.length > 0) {
+      this.state.editor.formatText(range.index, range.length, format, value);
     }
   },
 
-  // Cleanup
+  /**
+   * Cleanup resources
+   */
   cleanup() {
-    this.isDestroyed = true;
-
-    // Stop auto-save
+    this.state.isDestroyed = true;
     this.stopAutoSave();
 
-    // Clear references
-    this.editor = null;
-    this.inputElement = null;
-    this.saveButton = null;
-    this.autoSaveToggle = null;
-    this.autoSaveStatus = null;
+    // Clear all references
+    this.state.editor = null;
+    this.elements = {};
+
+    console.log("Quill editor cleanup completed");
   },
 };

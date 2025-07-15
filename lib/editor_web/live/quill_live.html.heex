@@ -10,7 +10,7 @@
     <div class="space-y-6">
       <!-- Quill Editor -->
       <div class="bg-gray-800 rounded-lg p-6 shadow-xl">
-        <div id="quill-editor-container" phx-hook="quill" class="w-full">
+        <div id="quill-editor-container" phx-update="ignore" phx-hook="quill" class="w-full">
           <input id="quill-input" type="hidden" name="content" value={@content} />
           <div
             id="quill-editor"
